@@ -46,12 +46,13 @@ int main()
       // "42" at the start of the message means there's a websocket message event.
       // The 4 signifies a websocket message
       // The 2 signifies a websocket event
+      int steps = 500;
       if (length && length > 2 && data[0] == '4' && data[1] == '2') {
         auto s = hasData(std::string(data).substr(0, length));
         if (s != "") {
           auto j = json::parse(s);
           std::string event = j[0].get<std::string>();
-          if (event == "telemetry") {
+          if (event == "telemetry" && counter < steps) {
             // j[1] is the data JSON object
             double cte = std::stod(j[1]["cte"].get<std::string>());
             double speed = std::stod(j[1]["speed"].get<std::string>());
@@ -74,24 +75,30 @@ int main()
             counter += 1;
             cout << "counter:" << counter << endl;
             cumm_error += cte * cte;
-            int steps = 500;
-            double dp_sum = dp[0] + dp[1] + dp[2];
-            if (counter == steps && !pid.is_initialized) {
-              best_error = cumm_error;
-              pid.is_initialized = true;
-            } else if (counter == steps && pid.is_initialized) {
-              pid_param[0] += dp[0];
-              std::string msg = "42[\"reset\",{}]";
-              ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
-              counter = 0;
-              cumm_error = 0;
-              pid.Init(pid_param[0], pid_param[1], pid_param[2], true);
-              }
+
+//            double dp_sum = dp[0] + dp[1] + dp[2];
+
           }
-      } else {
-        // Manual driving
-        std::string msg = "42[\"manual\",{}]";
-        ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
+          else if (event == "telemetry" && counter == steps && !pid.is_initialized) {
+            best_error = cumm_error;
+            pid.is_initialized = true;
+          }
+          else if (event == "telemetry" && counter == steps && pid.is_initialized) {
+            if (cumm_error < best_error){
+              best_error = cumm_error;
+              dp[0] *= 1.1;
+            }
+            pid_param[0] += dp[0];
+            std::string msg = "42[\"reset\",{}]";
+            ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
+            counter = 0;
+            cumm_error = 0;
+            pid.Init(pid_param[0], pid_param[1], pid_param[2], true);
+          }else {
+            // Manual driving
+            std::string msg = "42[\"manual\",{}]";
+            ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
+          }
       }
      }
     });
