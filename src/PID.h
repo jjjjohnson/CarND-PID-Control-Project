@@ -17,7 +17,7 @@ public:
   double Ki;
   double Kd;
 
-    bool is_initialized;
+  bool is_initialized;
 
   /*
   * Constructor

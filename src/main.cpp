@@ -34,14 +34,18 @@ int main()
 
   PID pid;
   // TODO: Initialize the pid variable.
-  vector<double> pid_param = {0,0,0};
-  vector<double> dp = {1, 1, 1};
+  vector<double> pid_param = {0.2,0.0001,5.5};
+  vector<double> dp = {1, 0.001, 1};
   pid.Init(pid_param[0],pid_param[1],pid_param[2], false);
 
   int counter = 0;
   double best_error = 0;
   double cumm_error = 0;
-  h.onMessage([&pid, &counter, &best_error, &cumm_error, &pid_param, &dp]\
+  int switchTweeker = 0;
+  bool up, optimize;
+  optimize = false; // flag to use twiddle find best parameter or not
+
+  h.onMessage([&pid, &counter, &best_error, &cumm_error, &pid_param, &dp, &switchTweeker, &up, &optimize]\
 (uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length, uWS::OpCode opCode) {
       // "42" at the start of the message means there's a websocket message event.
       // The 4 signifies a websocket message
@@ -49,10 +53,10 @@ int main()
       int steps = 500;
       if (length && length > 2 && data[0] == '4' && data[1] == '2') {
         auto s = hasData(std::string(data).substr(0, length));
-        if (s != "") {
+        if (s != ""){
           auto j = json::parse(s);
           std::string event = j[0].get<std::string>();
-          if (event == "telemetry" && counter < steps) {
+          if (event == "telemetry" ) {
             // j[1] is the data JSON object
             double cte = std::stod(j[1]["cte"].get<std::string>());
             double speed = std::stod(j[1]["speed"].get<std::string>());
@@ -63,44 +67,81 @@ int main()
             steer_value = pid.TotalError();
 
             // DEBUG
-            std::cout << "CTE: " << cte << " Steering Value: " << steer_value << std::endl;
+//            std::cout << "CTE: " << cte << " Steering Value: " << steer_value << std::endl;
+
 
             json msgJson;
             msgJson["steering_angle"] = steer_value;
             msgJson["throttle"] = 0.3;
             auto msg = "42[\"steer\"," + msgJson.dump() + "]";
-            std::cout << msg << std::endl;
+//            std::cout << msg << std::endl;
             ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
-
+          if (optimize){
             counter += 1;
-            cout << "counter:" << counter << endl;
+//            cout << "counter:" << counter << endl;
             cumm_error += cte * cte;
 
-//            double dp_sum = dp[0] + dp[1] + dp[2];
-
-          }
-          else if (event == "telemetry" && counter == steps && !pid.is_initialized) {
-            best_error = cumm_error;
-            pid.is_initialized = true;
-          }
-          else if (event == "telemetry" && counter == steps && pid.is_initialized) {
-            if (cumm_error < best_error){
-              best_error = cumm_error;
-              dp[0] *= 1.1;
+            double dp_sum = dp[0] + dp[1] + dp[2];
+            if (counter == steps) {
+              if (!pid.is_initialized) {
+                best_error = cumm_error;
+                pid.is_initialized = true;
+                up = true;
+              } else if (cumm_error < best_error) {
+                // improvement
+                best_error = cumm_error;
+                if (switchTweeker == 0) dp[switchTweeker] *= 1.1;
+                else if (switchTweeker == 1) dp[switchTweeker] *= 1.1;
+                else dp[switchTweeker] *= 1.1;
+                switchTweeker = (switchTweeker + 1) % 3;
+                up = true;
+              } else {
+                if (up == true) up = false;
+                else {
+                  if (switchTweeker == 0) {
+                    pid_param[switchTweeker] += dp[switchTweeker];
+                    dp[switchTweeker] *= 0.9;
+                  } else if (switchTweeker == 1) {
+                    pid_param[switchTweeker] += dp[switchTweeker];
+                    dp[switchTweeker] *= .9;
+                  } else {
+                    pid_param[switchTweeker] += dp[switchTweeker];
+                    dp[switchTweeker] *= .9;
+                  }
+                  switchTweeker = (switchTweeker + 1) % 3;
+                  up = true;
+                }
+              }
+              if (switchTweeker == 0) {
+                if (up) pid_param[switchTweeker] += dp[switchTweeker];
+                else pid_param[switchTweeker] -= 2 * dp[switchTweeker];
+              }
+              if (switchTweeker == 1) {
+                if (up) pid_param[switchTweeker] += dp[switchTweeker];
+                else pid_param[switchTweeker] -= 2 * dp[switchTweeker];
+              }
+              if (switchTweeker == 2) {
+                if (up) pid_param[switchTweeker] += dp[switchTweeker];
+                else pid_param[switchTweeker] -= 2 * dp[switchTweeker];
+              }
+              std::string msg = "42[\"reset\",{}]";
+              ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
+              counter = 0;
+              cumm_error = 0;
+              pid.Init(pid_param[0], pid_param[1], pid_param[2], true);
+              cout << "best_error: " << best_error << ", Kp: " << pid_param[0] << ", Ki: " << pid_param[1] << ", Kd: "
+                   << pid_param[2] << endl;
             }
-            pid_param[0] += dp[0];
-            std::string msg = "42[\"reset\",{}]";
-            ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
-            counter = 0;
-            cumm_error = 0;
-            pid.Init(pid_param[0], pid_param[1], pid_param[2], true);
-          }else {
-            // Manual driving
-            std::string msg = "42[\"manual\",{}]";
-            ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
           }
-      }
-     }
+          }
+
+            } else {
+              // Manual driving
+              std::string msg = "42[\"manual\",{}]";
+              ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
+            }
+
+        }
     });
 
   // We don't need this since we're not using HTTP but if it's removed the program
